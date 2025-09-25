@@ -7,46 +7,42 @@ import os
 @st.cache_resource
 def inicializar_firebase():
     """
-    Inicializa a conexão com o Firebase de forma inteligente e robusta.
-    Prioriza a verificação do ficheiro local e depois tenta os secrets da nuvem.
+    Inicializa a conexão com o Firebase de forma inteligente e à prova de falhas.
+    Prioriza a verificação do ficheiro local e depois tenta os secrets da nuvem com diagnóstico preciso.
     """
     try:
         # MÉTODO 1: LOCAL (Prioridade para desenvolvimento)
-        # Verifica se o ficheiro de credenciais existe na pasta do projeto.
         if os.path.exists('firebase_credentials.json'):
             if not firebase_admin._apps:
                 cred = credentials.Certificate('firebase_credentials.json')
                 firebase_admin.initialize_app(cred)
             return firestore.client()
 
-        # MÉTODO 2: NUVEM (Streamlit Secrets)
-        # Se o ficheiro local não for encontrado, tenta usar os secrets.
-        # Este método só deve funcionar no Streamlit Cloud.
-        if "private_key" in st.secrets:
-            cred_dict = {
-                "type": st.secrets.get("type"),
-                "project_id": st.secrets.get("project_id"),
-                "private_key_id": st.secrets.get("private_key_id"),
-                "private_key": st.secrets.get("private_key").replace('\\n', '\n'),
-                "client_email": st.secrets.get("client_email"),
-                "client_id": st.secrets.get("client_id"),
-                "auth_uri": st.secrets.get("auth_uri"),
-                "token_uri": st.secrets.get("token_uri"),
-                "auth_provider_x509_cert_url": st.secrets.get("auth_provider_x509_cert_url"),
-                "client_x509_cert_url": st.secrets.get("client_x509_cert_url"),
-                "universe_domain": st.secrets.get("universe_domain"),
-            }
+        # MÉTODO 2: NUVEM (Streamlit Secrets com Verificação Completa)
+        required_secrets = [
+            "type", "project_id", "private_key_id", "private_key",
+            "client_email", "client_id", "auth_uri", "token_uri",
+            "auth_provider_x509_cert_url", "client_x509_cert_url", "universe_domain"
+        ]
+        
+        # Verifica se todas as chaves necessárias existem nos secrets
+        if all(secret in st.secrets for secret in required_secrets):
+            cred_dict = {key: st.secrets.get(key) for key in required_secrets}
+            # Corrige a formatação da chave privada que é corrompida pelo Streamlit
+            cred_dict["private_key"] = cred_dict["private_key"].replace('\\n', '\n')
+            
             if not firebase_admin._apps:
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
             return firestore.client()
-        
-        # Se nenhum dos métodos funcionar, lança um erro claro.
-        raise FileNotFoundError("Credenciais do Firebase não encontradas.")
+        else:
+            # Diagnóstico preciso: informa quais chaves estão em falta
+            missing_secrets = [secret for secret in required_secrets if secret not in st.secrets]
+            raise ValueError(f"Configuração de Secrets incompleta. As seguintes chaves estão em falta: {missing_secrets}")
 
     except Exception as e:
         st.error(f"Erro crítico ao inicializar o Firebase: {e}")
-        st.error("Certifique-se de que o ficheiro 'firebase_credentials.json' está na pasta do projeto ou que os secrets estão configurados corretamente no Streamlit Cloud.")
+        st.error("Verifique a sua configuração de Secrets no painel do Streamlit Cloud ou o seu ficheiro 'firebase_credentials.json' local.")
         return None
 
 # --- O RESTO DO CÓDIGO PERMANECE O MESMO ---
@@ -114,3 +110,4 @@ if db:
         st.sidebar.warning("Nenhum perfil carregado.")
 else:
     st.error("A aplicação não conseguiu conectar-se à base de dados. As funcionalidades estão desativadas.")
+
