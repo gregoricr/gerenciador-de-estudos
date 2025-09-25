@@ -2,13 +2,14 @@ import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, firestore
 import os
+import json
 
 # --- INICIALIZAÇÃO INTELIGENTE E ROBUSTA DO FIREBASE (VERSÃO FINAL) ---
 @st.cache_resource
 def inicializar_firebase():
     """
     Inicializa a conexão com o Firebase de forma inteligente e à prova de falhas.
-    Prioriza a verificação do ficheiro local e depois tenta os secrets da nuvem com diagnóstico preciso.
+    Prioriza a verificação do ficheiro local e depois tenta o secret único da nuvem.
     """
     try:
         # MÉTODO 1: LOCAL (Prioridade para desenvolvimento)
@@ -18,27 +19,20 @@ def inicializar_firebase():
                 firebase_admin.initialize_app(cred)
             return firestore.client()
 
-        # MÉTODO 2: NUVEM (Streamlit Secrets com Verificação Completa)
-        required_secrets = [
-            "type", "project_id", "private_key_id", "private_key",
-            "client_email", "client_id", "auth_uri", "token_uri",
-            "auth_provider_x509_cert_url", "client_x509_cert_url", "universe_domain"
-        ]
-        
-        # Verifica se todas as chaves necessárias existem nos secrets
-        if all(secret in st.secrets for secret in required_secrets):
-            cred_dict = {key: st.secrets.get(key) for key in required_secrets}
-            # Corrige a formatação da chave privada que é corrompida pelo Streamlit
-            cred_dict["private_key"] = cred_dict["private_key"].replace('\\n', '\n')
+        # MÉTODO 2: NUVEM (Streamlit Secret Único - O método "Copiar e Colar")
+        if "firebase_credentials" in st.secrets:
+            # Pega na string completa guardada nos secrets
+            cred_json_string = st.secrets["firebase_credentials"]
+            # Converte a string num dicionário Python válido
+            cred_dict = json.loads(cred_json_string)
             
             if not firebase_admin._apps:
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
             return firestore.client()
-        else:
-            # Diagnóstico preciso: informa quais chaves estão em falta
-            missing_secrets = [secret for secret in required_secrets if secret not in st.secrets]
-            raise ValueError(f"Configuração de Secrets incompleta. As seguintes chaves estão em falta: {missing_secrets}")
+        
+        # Se nenhum dos métodos funcionar, lança um erro claro.
+        raise FileNotFoundError("Credenciais do Firebase não encontradas (nem ficheiro local, nem secret).")
 
     except Exception as e:
         st.error(f"Erro crítico ao inicializar o Firebase: {e}")
