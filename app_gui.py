@@ -1,45 +1,55 @@
 import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, firestore
-import json
 import os
 
-# --- INICIALIZAÇÃO INTELIGENTE DO FIREBASE ---
+# --- INICIALIZAÇÃO INTELIGENTE E ROBUSTA DO FIREBASE (VERSÃO FINAL) ---
 @st.cache_resource
 def inicializar_firebase():
     """
-    Inicializa a conexão com o Firebase de forma inteligente.
-    Procura por secrets no Streamlit Cloud. Se não encontrar, procura
-    pelo ficheiro de credenciais local.
+    Inicializa a conexão com o Firebase de forma inteligente e robusta.
+    Prioriza a verificação do ficheiro local e depois tenta os secrets da nuvem.
     """
     try:
-        # Tenta o método da nuvem (usando secrets)
-        if "firebase_credentials" in st.secrets:
-            cred_json_string = st.secrets["firebase_credentials"]
-            cred_dict = json.loads(cred_json_string)
-            
-            # Verifica se já foi inicializado para evitar erros
-            if not firebase_admin._apps:
-                cred = credentials.Certificate(cred_dict)
-                firebase_admin.initialize_app(cred)
-            
-            return firestore.client()
-
-        # Se não estiver na nuvem, tenta o método local (usando ficheiro)
-        elif os.path.exists('firebase_credentials.json'):
+        # MÉTODO 1: LOCAL (Prioridade para desenvolvimento)
+        # Verifica se o ficheiro de credenciais existe na pasta do projeto.
+        if os.path.exists('firebase_credentials.json'):
             if not firebase_admin._apps:
                 cred = credentials.Certificate('firebase_credentials.json')
                 firebase_admin.initialize_app(cred)
-            
+            return firestore.client()
+
+        # MÉTODO 2: NUVEM (Streamlit Secrets)
+        # Se o ficheiro local não for encontrado, tenta usar os secrets.
+        # Este método só deve funcionar no Streamlit Cloud.
+        if "private_key" in st.secrets:
+            cred_dict = {
+                "type": st.secrets.get("type"),
+                "project_id": st.secrets.get("project_id"),
+                "private_key_id": st.secrets.get("private_key_id"),
+                "private_key": st.secrets.get("private_key").replace('\\n', '\n'),
+                "client_email": st.secrets.get("client_email"),
+                "client_id": st.secrets.get("client_id"),
+                "auth_uri": st.secrets.get("auth_uri"),
+                "token_uri": st.secrets.get("token_uri"),
+                "auth_provider_x509_cert_url": st.secrets.get("auth_provider_x509_cert_url"),
+                "client_x509_cert_url": st.secrets.get("client_x509_cert_url"),
+                "universe_domain": st.secrets.get("universe_domain"),
+            }
+            if not firebase_admin._apps:
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
             return firestore.client()
         
-        else:
-            raise FileNotFoundError("Não foram encontradas credenciais (nem secrets, nem ficheiro local).")
+        # Se nenhum dos métodos funcionar, lança um erro claro.
+        raise FileNotFoundError("Credenciais do Firebase não encontradas.")
 
     except Exception as e:
         st.error(f"Erro crítico ao inicializar o Firebase: {e}")
-        st.error("Certifique-se de que o ficheiro 'firebase_credentials.json' está na pasta do projeto ou que os secrets estão configurados no Streamlit Cloud.")
+        st.error("Certifique-se de que o ficheiro 'firebase_credentials.json' está na pasta do projeto ou que os secrets estão configurados corretamente no Streamlit Cloud.")
         return None
+
+# --- O RESTO DO CÓDIGO PERMANECE O MESMO ---
 
 # --- LÓGICA DA PÁGINA PRINCIPAL ---
 st.set_page_config(
@@ -104,4 +114,3 @@ if db:
         st.sidebar.warning("Nenhum perfil carregado.")
 else:
     st.error("A aplicação não conseguiu conectar-se à base de dados. As funcionalidades estão desativadas.")
-
