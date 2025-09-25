@@ -1,105 +1,107 @@
 import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, firestore
-import json # Adicionamos a biblioteca para ler o ficheiro JSON
+import json
+import os
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(
-    page_title="Coach de Concursos",
-    page_icon="🎯",
-    layout="centered",
-    initial_sidebar_state="expanded"
-)
-
-# --- INICIALIZAÇÃO INTELIGENTE DO FIREBASE (COM CACHE) ---
-# Usamos @st.cache_resource para garantir que a conexão seja feita apenas uma vez por sessão.
+# --- INICIALIZAÇÃO INTELIGENTE DO FIREBASE ---
 @st.cache_resource
 def inicializar_firebase():
     """
     Inicializa a conexão com o Firebase de forma inteligente.
-    Tenta usar os Secrets do Streamlit primeiro (para a nuvem).
-    Se apanhar um erro de ficheiro não encontrado, tenta usar o ficheiro local (para desenvolvimento).
+    Procura por secrets no Streamlit Cloud. Se não encontrar, procura
+    pelo ficheiro de credenciais local.
     """
-    creds_dict = None
     try:
-        # Método 1: Tentar carregar as credenciais a partir dos Secrets do Streamlit (para a nuvem)
-        creds_dict = st.secrets["firebase_credentials"]
-        st.session_state.firebase_initialized_from = "secrets"
-    except FileNotFoundError:
-        # Se o ficheiro de secrets não for encontrado (ambiente local), tenta o método 2
-        st.info("Ficheiro de secrets não encontrado. A tentar carregar credenciais locais...")
-        try:
-            with open("firebase_credentials.json") as f:
-                creds_dict = json.load(f)
-            st.session_state.firebase_initialized_from = "local_file"
-        except FileNotFoundError:
-            st.error("ERRO CRÍTICO: Ficheiro 'firebase_credentials.json' não encontrado na pasta do projeto.")
-            return None
+        # Tenta o método da nuvem (usando secrets)
+        if "firebase_credentials" in st.secrets:
+            cred_json_string = st.secrets["firebase_credentials"]
+            cred_dict = json.loads(cred_json_string)
             
-    except Exception as e: # Apanha outros erros relacionados aos secrets
-        st.error(f"Ocorreu um erro ao ler os secrets: {e}")
+            # Verifica se já foi inicializado para evitar erros
+            if not firebase_admin._apps:
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+            
+            return firestore.client()
+
+        # Se não estiver na nuvem, tenta o método local (usando ficheiro)
+        elif os.path.exists('firebase_credentials.json'):
+            if not firebase_admin._apps:
+                cred = credentials.Certificate('firebase_credentials.json')
+                firebase_admin.initialize_app(cred)
+            
+            return firestore.client()
+        
+        else:
+            raise FileNotFoundError("Não foram encontradas credenciais (nem secrets, nem ficheiro local).")
+
+    except Exception as e:
+        st.error(f"Erro crítico ao inicializar o Firebase: {e}")
+        st.error("Certifique-se de que o ficheiro 'firebase_credentials.json' está na pasta do projeto ou que os secrets estão configurados no Streamlit Cloud.")
         return None
 
-    # Se as credenciais foram carregadas com sucesso (de qualquer método)
-    if creds_dict:
-        try:
-            cred = credentials.Certificate(creds_dict)
-            if not firebase_admin._apps:
-                firebase_admin.initialize_app(cred)
-            return firestore.client()
-        except Exception as e:
-            st.error(f"Erro ao inicializar o Firebase com as credenciais fornecidas: {e}")
-            return None
-    
-    # Se nenhuma credencial foi encontrada
-    st.error("Não foi possível encontrar as credenciais do Firebase (nem nos secrets, nem em ficheiro local).")
-    return None
+# --- LÓGICA DA PÁGINA PRINCIPAL ---
+st.set_page_config(
+    page_title="Coach de Concursos",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-
-# --- EXECUTA A INICIALIZAÇÃO ---
 db = inicializar_firebase()
 
-# Se a inicialização falhar, para a execução.
-if db is None:
-    st.stop()
+st.title("🎯 Coach de Concursos")
+st.markdown("A sua plataforma personalizada para gestão de estudos.")
 
-# --- LÓGICA DA PÁGINA PRINCIPAL ---
-st.title("🎯 Coach de Concursos Online")
-st.write("A sua plataforma personalizada para gestão de estudos.")
+if db:
+    # --- Carregar e selecionar perfis ---
+    try:
+        perfis_ref = db.collection('perfis_concursos').where('status', '==', 'Ativo').stream()
+        perfis_ativos = {doc.id: doc.to_dict() for doc in perfis_ref}
+    except Exception as e:
+        st.error(f"Não foi possível carregar os perfis da base de dados: {e}")
+        perfis_ativos = {}
 
-st.subheader("Selecione um Perfil de Estudo Ativo")
+    if not perfis_ativos:
+        st.info("Nenhum perfil de estudo ativo encontrado.")
+        st.warning("Vá a 'Gerenciar Perfis' para criar um novo perfil ou reativar um existente.")
+    else:
+        st.header("Selecione um Perfil de Estudo Ativo")
 
-# Carrega os perfis ativos
-try:
-    perfis_ref = db.collection('perfis_concursos').where(field_path='status', op_string='==', value='Ativo').stream()
-    perfis_ativos_docs = list(perfis_ref)
-    
-    perfis_ativos = []
-    for doc in perfis_ativos_docs:
-        perfil = doc.to_dict()
-        perfil['id_documento'] = doc.id
-        perfis_ativos.append(perfil)
-    
-    # Adiciona uma opção vazia para o seletor
-    opcoes_perfis = ["-"] + [f"{p['nome']} ({p['ano']})" for p in perfis_ativos]
-    
-    perfil_display_selecionado = st.selectbox(
-        "Escolha o concurso que deseja estudar hoje:",
-        options=opcoes_perfis,
-        index=0 # Começa com a opção "-" selecionada
-    )
-
-    if perfil_display_selecionado != "-":
-        # Encontra o dicionário completo do perfil selecionado
-        perfil_selecionado_completo = next((p for p in perfis_ativos if f"{p['nome']} ({p['ano']})" == perfil_display_selecionado), None)
+        # Cria uma lista de opções para o selectbox
+        opcoes_perfis = {perfil_id: f"{data['nome']} ({data['ano']})" for perfil_id, data in perfis_ativos.items()}
         
-        # Guarda o perfil na memória da sessão para que as outras páginas o possam usar
-        st.session_state.perfil_selecionado = perfil_selecionado_completo
-        st.success(f"Perfil **{perfil_selecionado_completo['nome']}** carregado com sucesso!")
-        st.info("Pode agora navegar para as outras páginas no menu à esquerda.")
+        # Tenta manter o perfil selecionado anteriormente
+        indice_selecionado = 0
+        if 'perfil_id_selecionado' in st.session_state:
+            ids_opcoes = list(opcoes_perfis.keys())
+            if st.session_state.perfil_id_selecionado in ids_opcoes:
+                indice_selecionado = ids_opcoes.index(st.session_state.perfil_id_selecionado)
 
-except Exception as e:
-    st.error(f"Não foi possível carregar os perfis de estudo. Erro: {e}")
+        perfil_id_selecionado = st.selectbox(
+            "Escolha o concurso que deseja estudar hoje:",
+            options=opcoes_perfis.keys(),
+            format_func=lambda x: opcoes_perfis[x],
+            index=indice_selecionado,
+            placeholder="Selecione um perfil..."
+        )
 
-st.sidebar.info("Desenvolvido por Grégori e Gemini.")
+        if st.button("Carregar Perfil Selecionado", type="primary"):
+            if perfil_id_selecionado:
+                st.session_state.perfil_selecionado = perfis_ativos[perfil_id_selecionado]
+                st.session_state.perfil_id_selecionado = perfil_id_selecionado
+                st.success(f"Perfil '{perfis_ativos[perfil_id_selecionado]['nome']}' carregado com sucesso!")
+                st.info("Pode agora navegar para as outras páginas no menu à esquerda.")
+            else:
+                st.warning("Por favor, selecione um perfil.")
+
+    st.markdown("---")
+    if 'perfil_selecionado' in st.session_state and st.session_state.perfil_selecionado:
+        perfil_atual = st.session_state.perfil_selecionado
+        st.sidebar.success(f"Perfil Ativo:\n**{perfil_atual['nome']}**")
+    else:
+        st.sidebar.warning("Nenhum perfil carregado.")
+else:
+    st.error("A aplicação não conseguiu conectar-se à base de dados. As funcionalidades estão desativadas.")
 
