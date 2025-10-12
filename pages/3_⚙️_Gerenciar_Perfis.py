@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from firebase_admin import firestore
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- FUNÇÕES AUXILIARES ---
 
@@ -29,7 +29,6 @@ def carregar_todos_perfis():
             perfil_data = doc.to_dict()
             perfil_data['id_documento'] = doc.id
             perfis[doc.id] = perfil_data
-        # Ordena os perfis para uma exibição consistente
         perfis_ordenados = dict(sorted(perfis.items(), key=lambda item: (item[1]['status'], item[1]['nome'])))
         return perfis_ordenados
     except Exception as e:
@@ -79,9 +78,15 @@ with tab1:
 
                 with col_action:
                     if perfil['status'] == 'Ativo':
-                        if st.button("Arquivar", key=f"archive_{perfil_id}", use_container_width=True):
-                            st.session_state.perfil_para_arquivar = perfil
-                            st.rerun()
+                        sub_cols = st.columns(2)
+                        with sub_cols[0]:
+                            if st.button("Arquivar", key=f"archive_{perfil_id}", use_container_width=True):
+                                st.session_state.perfil_para_arquivar = perfil
+                                st.rerun()
+                        with sub_cols[1]:
+                            if st.button("Definir Meta", key=f"meta_{perfil_id}", use_container_width=True):
+                                st.session_state.perfil_para_definir_meta = perfil
+                                st.rerun()
                     else: # Arquivado
                         sub_cols = st.columns(3)
                         with sub_cols[0]:
@@ -103,7 +108,39 @@ with tab1:
                                 st.rerun()
     
     # --- Formulários de Ação (Renderizados condicionalmente fora do loop) ---
-    
+
+    # Formulário para DEFINIR META SEMANAL
+    if 'perfil_para_definir_meta' in st.session_state and st.session_state.perfil_para_definir_meta:
+        perfil = st.session_state.perfil_para_definir_meta
+        with st.form(key=f"form_meta_{perfil['id_documento']}"):
+            st.info(f"Definindo Meta Semanal para: **{perfil['nome']}**")
+            meta_atual = perfil.get('meta_semanal', {})
+            
+            meta_questoes = st.number_input("Meta de Questões para a semana:", min_value=0, step=50, value=meta_atual.get('questoes_objetivo', 300))
+            meta_horas = st.number_input("Meta de Horas de Estudo para a semana:", min_value=0, step=1, value=meta_atual.get('horas_objetivo', 20))
+            
+            submitted = st.form_submit_button("Salvar Meta")
+            if submitted:
+                with st.spinner("Salvando meta..."):
+                    try:
+                        hoje = datetime.now()
+                        inicio_semana = hoje - timedelta(days=hoje.weekday())
+                        fim_semana = inicio_semana + timedelta(days=6)
+
+                        nova_meta = {
+                            "questoes_objetivo": meta_questoes,
+                            "horas_objetivo": meta_horas,
+                            "data_inicio": inicio_semana.strftime('%d/%m/%Y'),
+                            "data_fim": fim_semana.strftime('%d/%m/%Y')
+                        }
+                        db.collection('perfis_concursos').document(perfil['id_documento']).update({'meta_semanal': nova_meta})
+                        st.success("Meta semanal salva com sucesso!")
+                        del st.session_state.perfil_para_definir_meta
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao salvar a meta: {e}")
+
     # Formulário para ARQUIVAR um perfil
     if 'perfil_para_arquivar' in st.session_state and st.session_state.perfil_para_arquivar:
         perfil = st.session_state.perfil_para_arquivar
@@ -180,6 +217,7 @@ with tab1:
                 del st.session_state.perfil_para_editar_estrutura
                 st.rerun()
 
+
 # --- Aba de Criação de Perfil ---
 with tab2:
     st.subheader("Criar Novo Perfil de Concurso")
@@ -200,7 +238,6 @@ with tab2:
                 uploaded_file.seek(0)
                 df_temp = pd.read_csv(uploaded_file, sep=';', encoding='latin-1')
                 
-                # "VACINA": Limpa os nomes das colunas para evitar problemas futuros
                 df_temp.columns = df_temp.columns.str.strip()
 
                 if 'Disciplina' in df_temp.columns:
@@ -227,7 +264,6 @@ with tab2:
                         id_perfil = f"{nome.lower().replace(' ', '_').replace('/', '')}_{cargo.lower().replace(' ', '_')}_{ano}"
                         
                         df_edital = pd.read_csv(uploaded_file, encoding='latin-1', sep=';')
-                        # "VACINA" APLICADA AQUI TAMBÉM
                         df_edital.columns = df_edital.columns.str.strip()
 
                         df_edital['ID'] = df_edital.index + 1
