@@ -19,7 +19,7 @@ db = get_db_connection()
 
 @st.cache_data(ttl=300)
 def carregar_todos_perfis():
-    """Carrega todos os perfis de concurso da base de dados."""
+    """Carrega todos os perfis de concurso do banco de dados."""
     if not db:
         return {}
     try:
@@ -55,13 +55,13 @@ def get_disciplinas_from_dashboard(_perfil):
 st.set_page_config(page_title="Gerenciar Perfis", page_icon="⚙️", layout="centered")
 
 st.markdown("# ⚙️ Gerenciar Perfis")
-st.markdown("Crie novos perfis de estudo ou gira o estado dos concursos existentes.")
+st.markdown("Crie novos perfis de estudo ou gerencie o status dos concursos existentes.")
 
 tab1, tab2 = st.tabs(["Gerenciar Status", "Criar Novo Perfil"])
 
 # --- Aba de Gestão de Status ---
 with tab1:
-    st.subheader("Gerir Concursos Existentes")
+    st.subheader("Gerenciar Concursos Existentes")
     
     perfis = carregar_todos_perfis()
 
@@ -74,7 +74,7 @@ with tab1:
                 
                 with col_info:
                     st.markdown(f"**{perfil['nome']}** ({perfil['ano']})")
-                    nota_final_str = f"{perfil.get('nota_final', 'N/A'):.2f}" if isinstance(perfil.get('nota_final'), (int, float)) else "Não registada"
+                    nota_final_str = f"{perfil.get('nota_final', 'N/A'):.2f}" if isinstance(perfil.get('nota_final'), (int, float)) else "Não registrada"
                     st.caption(f"Status: **{perfil['status']}** | Nota Final: **{nota_final_str}**")
 
                 with col_action:
@@ -108,15 +108,15 @@ with tab1:
     if 'perfil_para_arquivar' in st.session_state and st.session_state.perfil_para_arquivar:
         perfil = st.session_state.perfil_para_arquivar
         with st.form(key=f"form_arquivar_{perfil['id_documento']}"):
-            st.warning(f"A arquivar: **{perfil['nome']}**")
-            registra_nota = st.checkbox("Registar a nota final da prova", value=False)
+            st.warning(f"Arquivando: **{perfil['nome']}**")
+            registra_nota = st.checkbox("Registrar a nota final da prova", value=False)
             nota_final = None
             if registra_nota:
                 nota_final = st.number_input("Digite a nota final (ex: 85.75):", format="%.2f", step=0.01)
             
             submitted = st.form_submit_button("Confirmar Arquivamento")
             if submitted:
-                with st.spinner("A arquivar..."):
+                with st.spinner("Arquivando..."):
                     try:
                         db.collection('perfis_concursos').document(perfil['id_documento']).update({'status': 'Arquivado', 'nota_final': nota_final})
                         st.success("Perfil arquivado com sucesso!")
@@ -130,21 +130,21 @@ with tab1:
     if 'perfil_para_editar_nota' in st.session_state and st.session_state.perfil_para_editar_nota:
         perfil = st.session_state.perfil_para_editar_nota
         with st.form(key=f"form_edit_nota_{perfil['id_documento']}"):
-            st.info(f"A editar a nota final para: **{perfil['nome']}**")
+            st.info(f"Editando a nota final para: **{perfil['nome']}**")
             nota_atual = perfil.get('nota_final') or 0.0
             nova_nota = st.number_input("Digite a nova nota final:", value=float(nota_atual), format="%.2f", step=0.01)
             
             submitted = st.form_submit_button("Salvar Nota")
             if submitted:
-                with st.spinner("A guardar nota..."):
+                with st.spinner("Salvando nota..."):
                     try:
                         db.collection('perfis_concursos').document(perfil['id_documento']).update({'nota_final': nova_nota})
-                        st.success("Nota guardada com sucesso!")
+                        st.success("Nota salva com sucesso!")
                         del st.session_state.perfil_para_editar_nota
                         st.cache_data.clear()
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Erro ao guardar a nota: {e}")
+                        st.error(f"Erro ao salvar a nota: {e}")
 
     # Formulário para EDITAR ESTRUTURA da prova
     if 'perfil_para_editar_estrutura' in st.session_state:
@@ -152,7 +152,7 @@ with tab1:
         disciplinas = get_disciplinas_from_dashboard(perfil)
         if disciplinas:
             with st.form(key=f"form_edit_estrutura_{perfil['id_documento']}"):
-                st.info(f"A editar a Estrutura da Prova para: **{perfil['nome']}**")
+                st.info(f"Editando a Estrutura da Prova para: **{perfil['nome']}**")
                 estrutura_atual = perfil.get('estrutura_prova', {})
                 nova_estrutura = {}
                 for disciplina in disciplinas:
@@ -165,15 +165,15 @@ with tab1:
 
                 submitted = st.form_submit_button("Salvar Estrutura da Prova")
                 if submitted:
-                    with st.spinner("A guardar estrutura..."):
+                    with st.spinner("Salvando estrutura..."):
                         try:
                             db.collection('perfis_concursos').document(perfil['id_documento']).update({'estrutura_prova': nova_estrutura})
-                            st.success("Estrutura da prova guardada com sucesso!")
+                            st.success("Estrutura da prova salva com sucesso!")
                             del st.session_state.perfil_para_editar_estrutura
                             st.cache_data.clear()
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Erro ao guardar a estrutura: {e}")
+                            st.error(f"Erro ao salvar a estrutura: {e}")
         else:
             st.error("Não foi possível carregar as disciplinas para este perfil.")
             if st.button("Ok"):
@@ -188,7 +188,7 @@ with tab2:
         cargo = st.text_input("Cargo (ex: Assessor Legislativo)")
         ano = st.number_input("Ano do Concurso (ex: 2025)", min_value=2000, max_value=2100, step=1, value=datetime.now().year)
         
-        uploaded_file = st.file_uploader("Carregue o ficheiro CSV do edital", type=["csv"])
+        uploaded_file = st.file_uploader("Carregue o arquivo CSV do edital", type=["csv"])
 
         st.markdown("---")
         st.markdown("##### Estrutura da Prova")
@@ -199,6 +199,10 @@ with tab2:
             try:
                 uploaded_file.seek(0)
                 df_temp = pd.read_csv(uploaded_file, sep=';', encoding='latin-1')
+                
+                # "VACINA": Limpa os nomes das colunas para evitar problemas futuros
+                df_temp.columns = df_temp.columns.str.strip()
+
                 if 'Disciplina' in df_temp.columns:
                     disciplinas_unicas = df_temp['Disciplina'].unique()
                     for disciplina in disciplinas_unicas:
@@ -208,21 +212,23 @@ with tab2:
                         peso = col2.number_input(f"Peso", key=f"p_{disciplina}", min_value=0.0, step=0.1, format="%.1f", value=1.0)
                         estrutura_prova[disciplina] = {'num_questoes': num_questoes, 'peso': peso}
                 else:
-                    st.error("O ficheiro CSV precisa de ter uma coluna chamada 'Disciplina'.")
+                    st.error("O arquivo CSV precisa ter uma coluna chamada 'Disciplina'.")
                 uploaded_file.seek(0)
             except Exception as e:
-                st.error(f"Erro ao processar o ficheiro CSV: {e}")
+                st.error(f"Erro ao processar o arquivo CSV: {e}")
 
         submitted = st.form_submit_button("Criar Perfil", type="primary")
         if submitted:
             if not all([nome, cargo, ano, uploaded_file]) or not estrutura_prova:
-                st.warning("Por favor, preencha todos os campos, carregue um ficheiro de edital e preencha a estrutura da prova.")
+                st.warning("Por favor, preencha todos os campos, carregue um arquivo de edital e preencha a estrutura da prova.")
             else:
-                with st.spinner("A criar novo perfil..."):
+                with st.spinner("Criando novo perfil..."):
                     try:
                         id_perfil = f"{nome.lower().replace(' ', '_').replace('/', '')}_{cargo.lower().replace(' ', '_')}_{ano}"
                         
                         df_edital = pd.read_csv(uploaded_file, encoding='latin-1', sep=';')
+                        # "VACINA" APLICADA AQUI TAMBÉM
+                        df_edital.columns = df_edital.columns.str.strip()
 
                         df_edital['ID'] = df_edital.index + 1
                         df_edital['Teoria (T)'] = '[ ]'
