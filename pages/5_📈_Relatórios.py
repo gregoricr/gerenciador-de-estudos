@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from firebase_admin import firestore
+from datetime import datetime
 
 # --- FUNÇÕES AUXILIARES ---
 
@@ -14,48 +15,45 @@ def get_db_connection():
 
 db = get_db_connection()
 
+# Funções de carregamento de dados (agora mais específicas)
 @st.cache_data(ttl=300)
 def carregar_dashboard_df(_perfil):
-    """Carrega a tabela de performance de um perfil."""
     if not _perfil or not db:
         return pd.DataFrame()
     try:
         colecao_dashboard = _perfil.get('colecao_dashboard')
         docs = db.collection(colecao_dashboard).stream()
         df = pd.DataFrame([doc.to_dict() for doc in docs])
-
-        df.rename(columns={
-            'Total_Questoes_Topico': 'Qsts',
-            'Total_Acertos_Topico': 'Acertos',
-            'Ultima_Medicao': 'Últ. Medição'
-        }, inplace=True, errors='ignore')
-
-        for col in ['Qsts', 'Acertos', '%']:
-            if col not in df.columns:
-                df[col] = 0
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        return df
-    except Exception as e:
-        st.error(f"Erro ao carregar o dashboard: {e}")
+        return df if not df.empty else pd.DataFrame()
+    except Exception:
         return pd.DataFrame()
 
 @st.cache_data(ttl=300)
-def carregar_historico_df(_perfil):
-    """Carrega o histórico de estudos de um perfil."""
+def carregar_historico_tempo_df(_perfil):
     if not _perfil or not db:
         return pd.DataFrame()
     try:
-        colecao_historico = _perfil.get('colecao_historico')
-        docs = db.collection(colecao_historico).stream()
+        id_perfil = _perfil.get('id_documento')
+        if not id_perfil:
+            return pd.DataFrame()
+        colecao_historico_tempo = f"historico_tempo_{id_perfil}"
+        docs = db.collection(colecao_historico_tempo).stream()
         df = pd.DataFrame([doc.to_dict() for doc in docs])
-        return df
-    except Exception as e:
-        st.error(f"Erro ao carregar o histórico de estudos: {e}")
+        return df if not df.empty else pd.DataFrame()
+    except Exception:
         return pd.DataFrame()
 
+# --- NOVA FUNÇÃO PARA FORMATAR O TEMPO ---
+def formatar_minutos(total_minutos):
+    """Converte um total de minutos para o formato 'Xh Ymin'."""
+    if total_minutos is None or total_minutos < 0:
+        return "N/A"
+    horas = int(total_minutos // 60)
+    minutos = int(total_minutos % 60)
+    return f"{horas}h {minutos:02d}min"
 
 # --- LÓGICA DA PÁGINA ---
-st.set_page_config(page_title="Relatórios Analíticos", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Relatórios", page_icon="📈", layout="wide")
 
 st.markdown("# 📈 Relatórios Analíticos")
 st.markdown("Analise o seu progresso com visões consolidadas do seu desempenho.")
@@ -65,73 +63,83 @@ if 'perfil_selecionado' in st.session_state and st.session_state.perfil_selecion
     st.info(f"A exibir relatórios para o concurso: **{perfil['nome']}**")
 
     df_dashboard = carregar_dashboard_df(perfil)
-    df_historico = carregar_historico_df(perfil)
 
-    tab1, tab2 = st.tabs(["Performance por Disciplina", "Atividade Diária"])
+    if df_dashboard.empty:
+        st.warning("Não há dados de dashboard para este perfil. Lance um simulado para começar a ver os relatórios.")
+    else:
+        tab1, tab2, tab3 = st.tabs(["Performance por Disciplina", "Atividade Diária", "Tempo de Estudo por Matéria"])
 
-    with tab1:
-        st.subheader("📊 Relatório de Performance por Disciplina")
-        if not df_dashboard.empty:
-            # Lógica do relatório por disciplina (existente)
+        # --- Aba 1: Performance por Disciplina ---
+        with tab1:
+            st.subheader("Relatório de Performance por Disciplina")
+            df_dashboard.rename(columns={'Total_Questoes_Topico': 'Qsts', 'Total_Acertos_Topico': 'Acertos'}, inplace=True, errors='ignore')
+            
+            # Garante que as colunas numéricas existam
+            if 'Qsts' not in df_dashboard.columns: df_dashboard['Qsts'] = 0
+            if 'Acertos' not in df_dashboard.columns: df_dashboard['Acertos'] = 0
+            if '%' not in df_dashboard.columns: df_dashboard['%'] = 0
+            
+            # Converte colunas para numérico, tratando erros
+            df_dashboard['Qsts'] = pd.to_numeric(df_dashboard['Qsts'], errors='coerce').fillna(0)
+            df_dashboard['Acertos'] = pd.to_numeric(df_dashboard['Acertos'], errors='coerce').fillna(0)
+            df_dashboard['%'] = pd.to_numeric(df_dashboard['%'], errors='coerce').fillna(0)
+
+
+            # Agrupa por disciplina
             relatorio_disciplina = df_dashboard.groupby('Disciplina').agg(
-                total_questoes=('Qsts', 'sum'),
-                total_acertos=('Acertos', 'sum'),
-                media_performance=('%', 'mean')
-            ).reset_index()
-            relatorio_disciplina['performance_geral'] = ((relatorio_disciplina['total_acertos'] / relatorio_disciplina['total_questoes']) * 100).fillna(0)
-            total_topicos = df_dashboard.groupby('Disciplina')['ID'].count().reset_index().rename(columns={'ID': 'total_topicos'})
-            topicos_medidos = df_dashboard[df_dashboard['Domínio'] != '[Não Medido]'].groupby('Disciplina')['ID'].count().reset_index().rename(columns={'ID': 'topicos_medidos'})
-            relatorio_disciplina = pd.merge(relatorio_disciplina, total_topicos, on='Disciplina', how='left')
-            relatorio_disciplina = pd.merge(relatorio_disciplina, topicos_medidos, on='Disciplina', how='left').fillna(0)
-            relatorio_disciplina['progresso_medicao'] = ((relatorio_disciplina['topicos_medidos'] / relatorio_disciplina['total_topicos']) * 100).fillna(0)
-            
-            relatorio_final_df = relatorio_disciplina[['Disciplina', 'total_questoes', 'total_acertos', 'performance_geral', 'media_performance', 'topicos_medidos', 'total_topicos', 'progresso_medicao']]
-            relatorio_final_df.columns = ['Disciplina', 'Total Questões', 'Total Acertos', 'Performance Geral (%)', 'Média de Performance (%)', 'Tópicos Medidos', 'Total Tópicos', 'Progresso da Medição (%)']
-            
-            st.dataframe(relatorio_final_df, column_config={
-                "Performance Geral (%)": st.column_config.ProgressColumn(format="%.2f%%", min_value=0, max_value=100),
-                "Média de Performance (%)": st.column_config.ProgressColumn(format="%.2f%%", min_value=0, max_value=100),
-                "Progresso da Medição (%)": st.column_config.ProgressColumn(format="%.2f%%", min_value=0, max_value=100)},
-                hide_index=True, use_container_width=True
-            )
-        else:
-            st.warning("Não há dados no dashboard para gerar este relatório.")
-
-    with tab2:
-        st.subheader("📅 Relatório de Atividade Diária")
-        if not df_historico.empty and 'Data' in df_historico.columns:
-            # Garante que a coluna 'Data' está no formato correto
-            df_historico['Data'] = pd.to_datetime(df_historico['Data'], format='%d/%m/%Y', errors='coerce')
-            df_historico.dropna(subset=['Data'], inplace=True) # Remove linhas onde a data não pôde ser convertida
-
-            # Agrupa por data e calcula os totais
-            relatorio_diario = df_historico.groupby(df_historico['Data'].dt.date).agg(
-                Total_Questoes=('Total_Questoes', 'sum'),
-                Acertos=('Acertos', 'sum')
+                Total_Questoes=('Qsts', 'sum'),
+                Total_Acertos=('Acertos', 'sum'),
+                # CORREÇÃO AQUI: Usar '%' em vez de 'p'
+                Media_Performance=('%', 'mean'),
+                Total_Topicos=('ID', 'count')
             ).reset_index()
 
-            relatorio_diario['% Acerto'] = ((relatorio_diario['Acertos'] / relatorio_diario['Total_Questoes']) * 100).fillna(0)
+            # Calcula a performance geral e o progresso
+            relatorio_disciplina['Performance Geral (%)'] = (relatorio_disciplina['Total_Acertos'] / relatorio_disciplina['Total_Questoes'] * 100).fillna(0)
             
-            # Ordena do mais recente para o mais antigo
-            relatorio_diario = relatorio_diario.sort_values(by='Data', ascending=False)
-            
-            # Formata a data para exibição
-            relatorio_diario['Data'] = pd.to_datetime(relatorio_diario['Data']).dt.strftime('%d/%m/%Y')
+            topicos_medidos = df_dashboard[df_dashboard['Domínio'] != '[Não Medido]'].groupby('Disciplina')['ID'].count().reset_index().rename(columns={'ID': 'Tópicos Medidos'})
+            relatorio_final = pd.merge(relatorio_disciplina, topicos_medidos, on='Disciplina', how='left').fillna(0)
 
-            st.markdown("##### Volume de Questões por Dia")
+            relatorio_final['Progresso da Medição (%)'] = (relatorio_final['Tópicos Medidos'] / relatorio_final['Total_Topicos'] * 100).fillna(0)
             
-            # Prepara dados para o gráfico
-            chart_data = relatorio_diario.rename(columns={'Data': 'index'}).set_index('index')
-            st.bar_chart(chart_data['Total_Questoes'])
+            st.dataframe(relatorio_final, use_container_width=True, hide_index=True,
+                         column_config={
+                             "Performance Geral (%)": st.column_config.ProgressColumn(format="%.2f%%", min_value=0, max_value=100),
+                             "Media_Performance": st.column_config.NumberColumn(label="Média de Performance (%)", format="%.2f%%"),
+                             "Progresso da Medição (%)": st.column_config.ProgressColumn(format="%.2f%%", min_value=0, max_value=100)
+                         })
+
+        # --- Aba 2: Atividade Diária ---
+        with tab2:
+            st.subheader("Relatório de Atividade Diária (Questões)")
+            # Esta parte será implementada quando tivermos o histórico de questões
+            st.info("Funcionalidade a ser implementada: Carregar o histórico de simulados para análise diária.")
+
+
+        # --- Aba 3: Tempo de Estudo por Matéria ---
+        with tab3:
+            st.subheader("Tempo Total de Estudo por Matéria")
+            df_tempo = carregar_historico_tempo_df(perfil)
             
-            st.markdown("##### Detalhe da Atividade Diária")
-            st.dataframe(relatorio_diario, hide_index=True, use_container_width=True,
-                column_config={
-                    "% Acerto": st.column_config.ProgressColumn(format="%.2f%%", min_value=0, max_value=100)
-                }
-            )
-        else:
-            st.warning("Ainda não há lançamentos no seu histórico para gerar este relatório.")
+            if df_tempo.empty:
+                st.info("Ainda não há registros de tempo de estudo para este perfil.")
+            else:
+                # Agrupa por matéria e soma os minutos
+                tempo_por_materia = df_tempo.groupby('Disciplina')['Tempo_Estudado_Minutos'].sum().reset_index()
+                
+                # APLICA A NOVA FUNÇÃO DE FORMATAÇÃO
+                tempo_por_materia['Tempo Total'] = tempo_por_materia['Tempo_Estudado_Minutos'].apply(formatar_minutos)
+                
+                # Exibe a tabela formatada
+                st.dataframe(
+                    tempo_por_materia[['Disciplina', 'Tempo Total']],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                # Gráfico
+                st.subheader("Distribuição do Tempo de Estudo")
+                st.bar_chart(tempo_por_materia.rename(columns={'Tempo_Estudado_Minutos': 'Minutos Estudados'}), x='Disciplina', y='Minutos Estudados')
 
 else:
     st.warning("Por favor, selecione um perfil na página principal para começar.")

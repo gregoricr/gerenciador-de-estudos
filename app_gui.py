@@ -8,7 +8,7 @@ import os
 def inicializar_firebase():
     """
     Inicializa a conexão com o Firebase de forma inteligente e à prova de falhas.
-    Prioriza a verificação do ficheiro local e depois tenta os secrets da nuvem com diagnóstico preciso.
+    Prioriza a verificação do ficheiro local e depois tenta os secrets da nuvem.
     """
     try:
         # MÉTODO 1: LOCAL (Prioridade para desenvolvimento)
@@ -25,10 +25,8 @@ def inicializar_firebase():
             "auth_provider_x509_cert_url", "client_x509_cert_url", "universe_domain"
         ]
         
-        # Verifica se todas as chaves necessárias existem nos secrets
         if all(secret in st.secrets for secret in required_secrets):
             cred_dict = {key: st.secrets.get(key) for key in required_secrets}
-            # Corrige a formatação da chave privada que é corrompida pelo Streamlit
             cred_dict["private_key"] = cred_dict["private_key"].replace('\\n', '\n')
             
             if not firebase_admin._apps:
@@ -36,7 +34,6 @@ def inicializar_firebase():
                 firebase_admin.initialize_app(cred)
             return firestore.client()
         else:
-            # Diagnóstico preciso: informa quais chaves estão em falta
             missing_secrets = [secret for secret in required_secrets if secret not in st.secrets]
             if not missing_secrets:
                 raise ValueError("A configuração de Secrets parece estar vazia.")
@@ -78,19 +75,16 @@ if db:
     else:
         st.header("Selecione um Perfil de Estudo Ativo")
 
-        # Cria uma lista de opções para o selectbox
         opcoes_perfis = {perfil_id: f"{data['nome']} ({data['ano']})" for perfil_id, data in perfis_ativos.items()}
         
-        # Tenta manter o perfil selecionado anteriormente
+        ids_opcoes = list(opcoes_perfis.keys())
         indice_selecionado = 0
-        if 'perfil_id_selecionado' in st.session_state:
-            ids_opcoes = list(opcoes_perfis.keys())
-            if st.session_state.perfil_id_selecionado in ids_opcoes:
-                indice_selecionado = ids_opcoes.index(st.session_state.perfil_id_selecionado)
+        if 'perfil_id_selecionado' in st.session_state and st.session_state.perfil_id_selecionado in ids_opcoes:
+            indice_selecionado = ids_opcoes.index(st.session_state.perfil_id_selecionado)
 
         perfil_id_selecionado = st.selectbox(
             "Escolha o concurso que deseja estudar hoje:",
-            options=opcoes_perfis.keys(),
+            options=ids_opcoes,
             format_func=lambda x: opcoes_perfis[x],
             index=indice_selecionado,
             placeholder="Selecione um perfil..."
@@ -98,9 +92,14 @@ if db:
 
         if st.button("Carregar Perfil Selecionado", type="primary"):
             if perfil_id_selecionado:
-                st.session_state.perfil_selecionado = perfis_ativos[perfil_id_selecionado]
+                # CORREÇÃO AQUI: Garante que o id_documento está sempre no perfil da sessão
+                perfil_selecionado_data = perfis_ativos[perfil_id_selecionado]
+                perfil_selecionado_data['id_documento'] = perfil_id_selecionado
+                
+                st.session_state.perfil_selecionado = perfil_selecionado_data
                 st.session_state.perfil_id_selecionado = perfil_id_selecionado
-                st.success(f"Perfil '{perfis_ativos[perfil_id_selecionado]['nome']}' carregado com sucesso!")
+                
+                st.success(f"Perfil '{perfil_selecionado_data['nome']}' carregado com sucesso!")
                 st.info("Pode agora navegar para as outras páginas no menu à esquerda.")
             else:
                 st.warning("Por favor, selecione um perfil.")
@@ -113,3 +112,4 @@ if db:
         st.sidebar.warning("Nenhum perfil carregado.")
 else:
     st.error("A aplicação não conseguiu conectar-se à base de dados. As funcionalidades estão desativadas.")
+
